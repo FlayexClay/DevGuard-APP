@@ -1,0 +1,59 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: devguard-api
+
+  # Runtime: acceso reactivo
+  r2dbc:
+    url: r2dbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}?sslMode=${DB_SSL_MODE:disable}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    pool:
+      enabled: true
+      initial-size: 5
+      max-size: 15
+      max-idle-time: 30m
+
+  # Migraciones: canal JDBC aparte, solo al arrancar
+  flyway:
+    enabled: true
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}
+    user: ${DB_USER}
+    password: ${DB_PASSWORD}
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Solo para validar el claim iss del token. NO se usa para
+          # descargar las claves: esa URL es publica y desde dentro del
+          # contenedor no resuelve.
+          issuer-uri: ${JWT_ISSUER_URI}
+
+devguard:
+  keycloak:
+    # URL interna de la red Docker. De aqui se descarga el JWKS.
+    internal-url: ${KEYCLOAK_INTERNAL_URL:http://keycloak:8080}
+    realm: ${KEYCLOAK_REALM:devguard}
+  security:
+    expected-audience: ${JWT_EXPECTED_AUDIENCE:devguard-api}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    com.devguard: ${LOG_LEVEL_APP:DEBUG}
+    org.springframework.security: ${LOG_LEVEL_SECURITY:INFO}
