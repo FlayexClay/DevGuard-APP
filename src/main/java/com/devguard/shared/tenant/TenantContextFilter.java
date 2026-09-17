@@ -1,6 +1,8 @@
 package com.devguard.shared.tenant;
 
+import com.devguard.identity.UserProvisioningService;
 import com.devguard.organization.OrganizationRepository;
+import com.devguard.shared.audit.AuditService;
 import com.devguard.shared.error.TenantResolutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,10 +30,16 @@ public class TenantContextFilter implements WebFilter {
     private static final String ORG_CLAIM = "organization_id";
 
     private final OrganizationRepository organizations;
+    private final UserProvisioningService userProvisioning;
+    private final AuditService audit;
     private final Map<String, UUID> slugToId = new ConcurrentHashMap<>();
 
-    public TenantContextFilter(OrganizationRepository organizations) {
+    public TenantContextFilter(OrganizationRepository organizations,
+                               UserProvisioningService userProvisioning,
+                               AuditService audit) {
         this.organizations = organizations;
+        this.userProvisioning = userProvisioning;
+        this.audit = audit;
     }
 
     @Override
@@ -51,46 +59,47 @@ public class TenantContextFilter implements WebFilter {
     private Mono<TenantContext> buildContext(JwtAuthenticationToken token) {
         Jwt jwt = token.getToken();
         String slug = jwt.getClaimAsString(ORG_CLAIM);
-
-        if (slug == null || slug.isBlank()) {
-            log.warn("Token sin claim {} para subject {}", ORG_CLAIM, jwt.getSubject());
-            return Mono.error(new TenantResolutionException(
-                    "El token no incluye organizacion"));
-        }
+        String subject = jwt.getSubject();
 
         Set<String> roles = token.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .map(a -> a.startsWith("ROLE_") ? a.substring(5) : a)
                 .collect(Collectors.toUnmodifiableSet());
 
-        UUID cached = slugToId.get(slug);
-        if (cached != null) {
-            return Mono.just(toContext(jwt, slug, cached, roles));
+        if (slug == null || slug.isBlank()) {
+            // El token es valido pero el usuario no tiene tenant asignado.
+            // Sin organizacion no hay nada que pueda consultar.
+            log.warn("Token sin claim {} para subject {}", ORG_CLAIM, subject);
+            return audit.recordTenantFailure(subject, null, "token sin organization_id")
+                    .then(Mono.error(new TenantResolutionException(
+                            "El token no incluye organizacion")));
         }
 
-        return organizations.findBySlugAndStatus(slug, "ACTIVE")
-                .switchIfEmpty(Mono.error(new TenantResolutionException(
-                        "Organizacion no encontrada o inactiva: " + slug)))
+        UUID cachedOrg = slugToId.get(slug);
+        Mono<UUID> orgId = cachedOrg != null
+                ? Mono.just(cachedOrg)
+                : organizations.findBySlugAndStatus(slug, "ACTIVE")
+                .switchIfEmpty(Mono.defer(() -> audit
+                        .recordTenantFailure(subject, slug,
+                                "organizacion no encontrada o inactiva")
+                        .then(Mono.error(new TenantResolutionException(
+                                "Organizacion no encontrada o inactiva: " + slug)))))
                 .map(org -> {
                     slugToId.put(slug, org.getId());
-                    return toContext(jwt, slug, org.getId(), roles);
+                    return org.getId();
                 });
+
+        return orgId.flatMap(id -> userProvisioning
+                .resolver(subject, jwt.getClaimAsString("email"),
+                        jwt.getClaimAsString("name"), id, roles)
+                .map(userId -> new TenantContext(
+                        id, slug, userId, subject, jwt.getClaimAsString("email"), roles)));
     }
 
     private Mono<Void> deny(ServerWebExchange exchange, TenantResolutionException ex) {
         log.warn("Acceso denegado: {}", ex.getMessage());
         exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
         return exchange.getResponse().setComplete();
-    }
-
-    private static TenantContext toContext(Jwt jwt, String slug, UUID id, Set<String> roles) {
-        return new TenantContext(
-                id,
-                slug,
-                jwt.getSubject(),
-                jwt.getClaimAsString("email"),
-                roles
-        );
     }
 
 }

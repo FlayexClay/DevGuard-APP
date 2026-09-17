@@ -34,13 +34,14 @@ public class Project {
     @Column("updated_at")
     private OffsetDateTime updatedAt;
 
-    public static Project create(UUID organizationId, String name, String slug, String description) {
+    public static Project create(UUID organizationId, String name, String slug, String description, UUID createdBy) {
         Project p = new Project();
         p.organizationId = organizationId;
         p.name = name;
         p.slug = slug;
         p.description = description;
         p.status = "ACTIVE";
+        p.createdBy = createdBy;
         return p;
     }
 

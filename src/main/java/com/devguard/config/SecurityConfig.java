@@ -3,6 +3,7 @@ package com.devguard.config;
 import com.devguard.shared.tenant.TenantContextFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.convert.converter.Converter;
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -59,6 +60,7 @@ public class SecurityConfig {
                         .anyExchange().denyAll())
                 .oauth2ResourceServer(oauth -> oauth
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())))
+                .addFilterAfter(tenantContextFilter, SecurityWebFiltersOrder.AUTHENTICATION)
                 .build();
     }
 
@@ -94,6 +96,6 @@ public class SecurityConfig {
         }
         return ((Collection<String>) list).stream()
                 .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
-                .collect(Collectors.toUnmodifiableList());
+                .collect(Collectors.toUnmodifiableSet());
     }
 }

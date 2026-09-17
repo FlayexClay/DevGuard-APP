@@ -11,6 +11,7 @@ import java.util.UUID;
 public record TenantContext (
         UUID organizationId,
         String organizationSlug,
+        UUID userId,
         String subject,
         String email,
         Set<String> roles) {
